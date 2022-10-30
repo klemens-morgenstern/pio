@@ -7,27 +7,26 @@
 
 #include "doctest.h"
 
-#include <make_pipe.hpp>
+#include <pio.hpp>
 
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/write.hpp>
-#include <boost/asio/detached.hpp>
-#include <boost/asio/read.hpp>
-#include <boost/asio/read_until.hpp>
+#include <asio/io_context.hpp>
+#include <asio/write.hpp>
+#include <asio/detached.hpp>
+#include <asio/read.hpp>
+#include <asio/read_until.hpp>
 
 TEST_CASE("make_pipe")
 {
-    boost::asio::io_context ctx;
-    auto pp = te::make_pipe(ctx.get_executor());
-
-    auto r = std::move(pp.first);
-    auto w = std::move(pp.second);
+    asio::io_context ctx;
+    pio::readable_pipe r{ctx};
+    pio::writable_pipe w{ctx};
+    pio::connect_pipe(r, w);
 
 
     std::string res;
 
-    boost::asio::async_write(*w, boost::asio::buffer("Test\n", 5), boost::asio::detached);
-    boost::asio::async_read_until(*r, boost::asio::dynamic_buffer(res), '\n', boost::asio::detached);
+    pio::async_write(w, asio::buffer("Test\n", 5), asio::detached);
+    asio::async_read_until(r, asio::dynamic_buffer(res), '\n', asio::detached);
     ctx.run();
 
     CHECK(res == "Test\n");

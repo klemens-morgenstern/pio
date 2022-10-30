@@ -5,19 +5,19 @@
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 //
 
-#include <handler.hpp>
+#include "pio/handler.hpp"
 
 #include "doctest.h"
 
-#include <boost/asio.hpp>
+#include <asio.hpp>
 
 TEST_CASE("handler_type")
 {
-    boost::asio::io_context ctx;
+    asio::io_context ctx;
     bool called = false;
-    te::handler_type<void(boost::system::error_code)> ht{[&](auto e) {called = true;}, ctx.get_executor()};
+    pio::handler_type<void(std::error_code)> ht{[&](auto e) {called = true;}, ctx.get_executor()};
 
-    boost::asio::steady_timer tim{ctx};
+    asio::steady_timer tim{ctx};
     tim.async_wait(std::move(ht));
 
     CHECK(!called);

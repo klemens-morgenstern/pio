@@ -5,20 +5,51 @@
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 //
 
-#ifndef TE_ASIO_HANDLER_HPP
-#define TE_ASIO_HANDLER_HPP
+#ifndef PIO_HANDLER_HPP
+#define PIO_HANDLER_HPP
 
-#include <boost/asio/any_io_executor.hpp>
-#include <boost/asio/associated_allocator.hpp>
-#include <boost/asio/associated_cancellation_slot.hpp>
-#include <boost/asio/associated_executor.hpp>
-#include <boost/smart_ptr/allocate_unique.hpp>
-#include <boost/container/pmr/memory_resource.hpp>
-#include <boost/container/pmr/polymorphic_allocator.hpp>
-#include <boost/container/pmr/resource_adaptor.hpp>
+#include <asio/any_io_executor.hpp>
+#include <asio/associated_allocator.hpp>
+#include <asio/associated_cancellation_slot.hpp>
+#include <asio/associated_executor.hpp>
+#include <memory_resource>
 
-namespace te
+namespace pio
 {
+
+template<typename Allocator>
+struct allocator_adaptor final : std::pmr::memory_resource
+{
+    allocator_adaptor(Allocator allocator) : allocator(allocator) {}
+
+    using allocator_type = typename std::allocator_traits<Allocator>::template rebind_alloc<char>;
+    using traits = std::allocator_traits<allocator_type>;
+    allocator_type allocator;
+
+    void*
+    do_allocate(size_t bytes, size_t alignment) override
+    {
+        return traits::allocate(allocator, bytes);
+    }
+
+    void
+    do_deallocate(void* p, size_t bytes, size_t alignment)
+    {
+        return traits::deallocate(allocator, static_cast<char*>(p), bytes);
+    };
+
+    bool
+    do_is_equal(const memory_resource& __other) const noexcept
+    {
+        auto p = reinterpret_cast<const allocator_adaptor*>(&__other);
+        return p && p->allocator == allocator;
+    };
+
+    allocator_type get_allocator() const
+    {
+        return allocator;
+    }
+};
 
 template<typename Signature>
 struct handler_type;
@@ -30,13 +61,13 @@ struct handler_type<void(Args...)>
     {
         virtual void invoke(Args...) = 0;
 
-        using allocator_type = boost::container::pmr::polymorphic_allocator<void>;
+        using allocator_type = std::pmr::polymorphic_allocator<void>;
         virtual allocator_type get_allocator() const = 0;
 
-        using executor_type = boost::asio::any_io_executor;
+        using executor_type = asio::any_io_executor;
         virtual executor_type get_executor() const = 0;
 
-        using cancellation_slot_type = boost::asio::cancellation_slot;
+        using cancellation_slot_type = asio::cancellation_slot;
         virtual cancellation_slot_type get_cancellation_slot() const = 0;
 
         virtual void destroy() = 0;
@@ -46,9 +77,9 @@ struct handler_type<void(Args...)>
     template<class Handler>
     struct impl : base
     {
-        using allocator_type_actual = boost::asio::associated_allocator_t<Handler>;
+        using allocator_type_actual = asio::associated_allocator_t<Handler>;
 
-        using allocator_type = boost::container::pmr::polymorphic_allocator<void>;
+        using allocator_type = std::pmr::polymorphic_allocator<void>;
         allocator_type get_allocator() const override
         {
             if (std::is_same<allocator_type_actual, std::allocator<void>>::value)
@@ -57,28 +88,36 @@ struct handler_type<void(Args...)>
                 return allocator_type(&alloc);
         }
 
-        using executor_type = boost::asio::any_io_executor;
+        using executor_type = asio::any_io_executor;
         executor_type get_executor() const override
         {
-            return boost::asio::get_associated_executor(handler, default_executor);
+            return asio::get_associated_executor(handler, default_executor);
         }
 
-        using cancellation_slot_type = boost::asio::cancellation_slot;
+        using cancellation_slot_type = asio::cancellation_slot;
         cancellation_slot_type get_cancellation_slot() const override
         {
-            return boost::asio::get_associated_cancellation_slot(handler);
+            return asio::get_associated_cancellation_slot(handler);
         }
 
         Handler handler;
-        boost::asio::any_io_executor default_executor;
-        mutable boost::container::pmr::resource_adaptor<allocator_type_actual> alloc{boost::asio::get_associated_allocator(handler)};
+        asio::any_io_executor default_executor;
+        mutable allocator_adaptor<allocator_type_actual> alloc{asio::get_associated_allocator(handler)};
 
         template<typename Handler_>
-        impl(Handler_ && h, boost::asio::any_io_executor exec)
+        impl(Handler_ && h, asio::any_io_executor exec)
                     : handler(std::forward<Handler_>(h)),
                       default_executor(std::move(exec))
         {
         }
+
+        template<typename Handler_>
+        impl(Handler_ && h)
+                : handler(std::forward<Handler_>(h)),
+                  default_executor(asio::get_associated_executor(handler))
+        {
+        }
+
 
         virtual void invoke(Args... args)
         {
@@ -97,14 +136,14 @@ struct handler_type<void(Args...)>
         }
     };
 
-    using allocator_type = boost::container::pmr::polymorphic_allocator<void>;
+    using allocator_type = std::pmr::polymorphic_allocator<void>;
     allocator_type get_allocator() const
     {
         assert(impl_);
         return impl_->get_allocator();
     }
 
-    using executor_type = boost::asio::any_io_executor;
+    using executor_type = asio::any_io_executor;
     executor_type get_executor() const
     {
         assert(impl_);
@@ -112,7 +151,7 @@ struct handler_type<void(Args...)>
     }
 
 
-    using cancellation_slot_type = boost::asio::cancellation_slot;
+    using cancellation_slot_type = asio::cancellation_slot;
     cancellation_slot_type get_cancellation_slot() const
     {
         assert(impl_);
@@ -139,9 +178,9 @@ struct handler_type<void(Args...)>
 
     template<typename Handler>
     static std::unique_ptr<base, deleter_t> make(Handler && handler,
-                                                 boost::asio::any_io_executor exec)
+                                                 asio::any_io_executor exec)
     {
-        auto halloc = boost::asio::get_associated_allocator(handler);
+        auto halloc = asio::get_associated_allocator(handler);
         using impl_t = impl<std::decay_t<Handler>>;
         auto alloc  = typename std::allocator_traits< decltype(halloc) >:: template rebind_alloc< impl_t >(halloc);
         using traits = std::allocator_traits< decltype(alloc) >;
@@ -166,11 +205,14 @@ struct handler_type<void(Args...)>
     }
 
     template<typename Handler>
-    handler_type(Handler && handler, boost::asio::any_io_executor exec)
+    handler_type(Handler && handler, asio::any_io_executor exec)
             : impl_(make(std::forward<Handler>(handler), std::move(exec)))
     {}
 };
 
+using wait_handler = handler_type<void(std::error_code)>;
+using read_handler = handler_type<void(std::error_code, std::size_t)>;
+using write_handler = handler_type<void(std::error_code, std::size_t)>;
 
 }
 
